@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>NMFT Studio | Kaleidoscope GLSL v2.0</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+  body, html { width: 100%; height: 100%; overflow: hidden; background-color: #050505;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #fff; }
+  #glsl-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; touch-action: none; }
+  .ui-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;
+    display: flex; flex-direction: column; justify-content: space-between; padding: 24px; pointer-events: none;
+    transition: opacity 0.5s ease; }
+  .ui-container.hidden { opacity: 0; pointer-events: none; }
+  #ui-header.faded { opacity: 0 !important; pointer-events: none; }
+  #hamburger-btn { position: absolute; bottom: 24px; left: 24px; z-index: 3;
+    width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(10,10,10,0.5); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    opacity: 0; pointer-events: none; transition: opacity 0.4s ease; }
+  #hamburger-btn.visible { opacity: 1; pointer-events: auto; }
+  #hamburger-btn span { display: block; width: 16px; height: 2px; background: #fff; position: relative; }
+  #hamburger-btn span::before, #hamburger-btn span::after { content: ""; position: absolute; left: 0; width: 16px; height: 2px; background: #fff; }
+  #hamburger-btn span::before { top: -5px; }
+  #hamburger-btn span::after { top: 5px; }
+  header, footer { background: rgba(10, 10, 10, 0.4); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 16px 20px;
+    pointer-events: auto; opacity: 0; transform: translateY(-20px); }
+  footer { transform: translateY(20px); display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; }
+  h1 { font-size: 1rem; letter-spacing: 2px; text-transform: uppercase; font-weight: 300; color: rgba(255,255,255,0.9); }
+  p { font-size: 0.75rem; color: rgba(255,255,255,0.5); margin-top: 4px; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn { background: #fff; color: #000; border: none; padding: 10px 16px; border-radius: 8px;
+    font-weight: 600; font-size: 0.7rem; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; }
+  .btn.secondary { background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
+  .btn:active { transform: scale(0.95); }
+  input[type=range] { width: 90px; accent-color: #fff; }
+  .slider-group { display: flex; align-items: center; gap: 6px; font-size: 0.65rem; color: rgba(255,255,255,0.6); text-transform: uppercase; letter-spacing: 1px; }
+  .tag-label { font-size: 0.65rem; color: rgba(255,255,255,0.55); text-transform: uppercase; letter-spacing: 1px; margin-right: 4px; }
+  #error-box { position: absolute; inset: 0; z-index: 5; display: none; align-items: center; justify-content: center;
+    text-align: center; padding: 40px; background: #050505; }
+</style>
+</head>
+<body>
+
+<canvas id="glsl-canvas"></canvas>
+<video id="camera-video" autoplay playsinline muted style="display:none;"></video>
+
+<div id="error-box">
+  <div>
+    <h1 style="margin-bottom:12px;">No se pudo iniciar WebGL</h1>
+    <p>Probá con otro navegador o activá la aceleración por hardware.</p>
+  </div>
+</div>
+
+<div class="ui-container">
+  <header id="ui-header">
+    <h1>NMFT // Caleidoscopio v2.0</h1>
+    <p>Arte generativo reactivo a la orientación y al tacto</p>
+  </header>
+
+  <footer id="ui-footer">
+    <div class="controls">
+      <div class="slider-group">
+        Segmentos
+        <input type="range" id="segments-slider" min="2" max="16" step="1" value="6">
+      </div>
+      <button class="btn secondary" id="palette-btn">Paleta</button>
+      <span id="palette-label" class="tag-label">Nebulosa</span>
+      <button class="btn secondary" id="pattern-btn">Patrón</button>
+      <span id="pattern-label" class="tag-label">Ondas</span>
+      <button class="btn secondary" id="save-btn">Guardar PNG</button>
+      <button class="btn secondary" id="fullscreen-btn">Pantalla completa</button>
+      <button class="btn secondary" id="camera-btn">Cámara</button>
+      <div class="slider-group">
+        Mezcla
+        <input type="range" id="cam-mix-slider" min="0" max="100" step="1" value="70">
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <span id="status-text" style="font-size: 0.75rem; color: rgba(255,255,255,0.7);">Arrastrá o girá el dispositivo</span>
+      <button class="btn" id="activate-btn">Activar Sensores</button>
+    </div>
+  </footer>
+</div>
+
+<button id="hamburger-btn" aria-label="Mostrar controles"><span></span></button>
+
+<script>
+(() => {
+  const canvas = document.getElementById("glsl-canvas");
+  const errorBox = document.getElementById("error-box");
+  const gl = canvas.getContext("webgl", { preserveDrawingBuffer: true, antialias: true })
+          || canvas.getContext("experimental-webgl", { preserveDrawingBuffer: true });
+
+  if (!gl) {
+    errorBox.style.display = "flex";
+    document.querySelector(".ui-container").style.display = "none";
+    return;
+  }
+
+  const vertSrc = `
+    attribute vec2 a_position;
+    void main() {
+      gl_Position = vec4(a_position, 0.0, 1.0);
+    }
+  `;
+
+  const fragSrc = `
+    #ifdef GL_ES
+    precision highp float;
+    #endif
+
+    uniform vec2 u_resolution;
+    uniform float u_time;
+    uniform vec2 u_mouse;
+    uniform vec2 u_motion;
+    uniform float u_segments;
+    uniform float u_patternType;
+    uniform vec3 u_col1;
+    uniform vec3 u_col2;
+    uniform vec3 u_col3;
+    uniform vec3 u_lineColor;
+    uniform sampler2D u_camera;
+    uniform float u_useCamera;
+    uniform float u_camMix;
+    uniform float u_camAspect;
+
+    #define PI 3.14159265359
+
+    mat2 rotate2d(float angle){
+      return mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+    }
+
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    }
+
+    void main() {
+      vec2 st = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / min(u_resolution.x, u_resolution.y);
+
+      float tilt = clamp(length(u_motion), 0.0, 1.6);
+      float zoom = 1.0 + tilt * 0.9;
+      float speed = 1.0 + tilt * 1.4;
+
+      vec2 autoDrift = vec2(sin(u_time * 0.13), cos(u_time * 0.17)) * 0.22;
+      vec2 motionOffset = u_motion * 0.6 + (u_mouse - 0.5) * 0.9 + autoDrift;
+      st += motionOffset;
+
+      float angle = atan(st.y, st.x);
+      float radius = length(st);
+
+      float segments = max(u_segments, 2.0);
+      float a = mod(angle, 2.0 * PI / segments);
+      a = abs(a - PI / segments);
+
+      st = vec2(cos(a), sin(a)) * radius;
+      st *= rotate2d(u_time * 0.15 * speed + radius + u_motion.x * 1.3);
+      st *= zoom;
+
+      float angle2 = atan(st.y, st.x);
+      vec3 color;
+
+      if (u_patternType < 0.5) {
+        // Ondas: anillos concéntricos suaves
+        vec2 fpos = fract(st * 4.0);
+        float dist = length(fpos - 0.5);
+        float patt = smoothstep(0.4, 0.1, sin(dist * 10.0 - u_time * 2.0 + radius * 5.0));
+        color = mix(u_col1, u_col2, patt);
+        color = mix(color, u_col3, sin(radius * 8.0 - u_time) * 0.5 + 0.5);
+
+      } else if (u_patternType < 1.5) {
+        // Cuadrícula: celdas en damero con líneas divisorias
+        vec2 cell = st * 5.0 + u_time * 0.1;
+        vec2 cellFrac = fract(cell);
+        vec2 edgeDist = abs(cellFrac - 0.5);
+        float lineMask = 1.0 - smoothstep(0.40, 0.47, max(edgeDist.x, edgeDist.y));
+        vec2 idx = floor(cell);
+        float parity = mod(idx.x + idx.y, 2.0);
+        vec3 fill = mix(u_col2, u_col3, parity);
+        fill = mix(fill, u_col1, sin(radius * 6.0 - u_time) * 0.5 + 0.5);
+        color = mix(fill, u_lineColor, lineMask);
+
+      } else if (u_patternType < 2.5) {
+        // Pétalos: forma floral con contorno delgado
+        float petal = cos(angle2 * 5.0 + u_time * 0.6) * 0.5 + 0.5;
+        float d = abs(radius - petal * 0.45 - 0.12);
+        float outline = smoothstep(0.025, 0.0, d);
+        vec3 fill = mix(u_col1, u_col2, petal);
+        fill = mix(fill, u_col3, sin(radius * 5.0 - u_time * 1.5) * 0.5 + 0.5);
+        color = mix(fill, u_lineColor, outline);
+
+      } else if (u_patternType < 3.5) {
+        // Espiral: bandas curvas separadas por líneas finas
+        float spiral = fract(radius * 6.0 - angle2 * 1.5 - u_time * 1.2);
+        float band = smoothstep(0.0, 0.06, spiral) * (1.0 - smoothstep(0.94, 1.0, spiral));
+        vec3 fill = mix(u_col2, u_col3, sin(radius * 4.0 - u_time) * 0.5 + 0.5);
+        fill = mix(fill, u_col1, 0.15);
+        color = mix(u_lineColor, fill, band);
+
+      } else if (u_patternType < 4.5) {
+        // Líquido: superficie fluida con reflejos ondulantes
+        vec2 q = st;
+        q += 0.35 * vec2(sin(q.y * 4.0 + u_time * 1.3), cos(q.x * 4.0 - u_time * 1.1));
+        float flow = sin((q.x + q.y) * 3.0 + u_time * 1.5) * 0.5 + 0.5;
+        vec3 fill = mix(u_col1, u_col2, flow);
+        fill = mix(fill, u_col3, sin(length(q) * 4.0 - u_time * 1.2) * 0.5 + 0.5);
+        float shine = smoothstep(0.92, 1.0, flow);
+        color = mix(fill, vec3(1.0), shine * 0.5);
+        color = mix(color, u_lineColor, smoothstep(0.0, 0.02, abs(flow - 0.5) - 0.47));
+
+      } else if (u_patternType < 5.5) {
+        // Humo: capas suaves que se elevan y se difuminan
+        vec2 sq = st;
+        sq.y -= u_time * 0.18;
+        sq += 0.2 * vec2(sin(sq.y * 2.5 + u_time * 0.4), cos(sq.x * 2.0 - u_time * 0.3));
+        float n1 = sin(sq.x * 3.0 + sq.y * 5.0) * 0.5 + 0.5;
+        float n2 = sin(sq.x * 5.5 - sq.y * 3.2 + u_time * 0.6) * 0.5 + 0.5;
+        float smoke = smoothstep(0.15, 0.85, mix(n1, n2, 0.5));
+        vec3 fill = mix(u_col1, u_col2, smoke);
+        fill = mix(fill, u_col3, smoothstep(0.3, 0.7, sin(radius * 3.0 - u_time * 0.5) * 0.5 + 0.5));
+        float wisp = smoothstep(0.46, 0.5, abs(smoke - 0.5));
+        color = mix(fill, u_lineColor, wisp * 0.25);
+
+      } else {
+        // Hielo: facetas cristalinas tipo Voronoi con grietas
+        vec2 gv = st * 3.5;
+        vec2 cell = floor(gv);
+        vec2 f = fract(gv);
+        float minDist = 10.0;
+        float cellId = 0.0;
+        for (int y = -1; y <= 1; y++) {
+          for (int x = -1; x <= 1; x++) {
+            vec2 neighbor = vec2(float(x), float(y));
+            vec2 point = neighbor + vec2(hash(cell + neighbor), hash(cell + neighbor + 17.0)) - f;
+            float d = length(point);
+            if (d < minDist) {
+              minDist = d;
+              cellId = hash(cell + neighbor + 3.3);
+            }
+          }
+        }
+        float crack = 1.0 - smoothstep(0.0, 0.06, minDist);
+        vec3 fill = mix(u_col1, u_col2, cellId);
+        fill = mix(fill, u_col3, smoothstep(0.3, 0.9, cellId) * (sin(radius * 4.0 - u_time) * 0.5 + 0.5));
+        fill = mix(fill, vec3(1.0), smoothstep(0.85, 1.0, cellId) * 0.4);
+        color = mix(fill, u_lineColor, crack);
+      }
+
+      // Cámara: la realidad capturada se tiñe con la paleta (tritono según luminancia)
+      // y se funde con el patrón generativo, en vez de reemplazarlo.
+      if (u_useCamera > 0.5) {
+        vec2 camUV = st;
+        camUV.x *= u_camAspect;
+        camUV = fract(camUV * 1.2 + 0.5);
+        vec3 camColor = texture2D(u_camera, camUV).rgb;
+        float lum = dot(camColor, vec3(0.299, 0.587, 0.114));
+        vec3 graded;
+        if (lum < 0.5) {
+          graded = mix(u_col1, u_col2, lum * 2.0);
+        } else {
+          graded = mix(u_col2, u_col3, (lum - 0.5) * 2.0);
+        }
+        vec3 gradedWeighted = graded * u_camMix;
+        color = 1.0 - (1.0 - color) * (1.0 - gradedWeighted);
+      }
+
+      // Destello: cuanto más inclinás el teléfono, más brilla el patrón
+      color = mix(color, vec3(1.0), smoothstep(0.5, 1.5, tilt) * 0.3);
+
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      console.error(gl.getShaderInfoLog(s));
+      throw new Error("Error de compilación de shader");
+    }
+    return s;
+  }
+
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vertSrc));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragSrc));
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(program));
+  }
+  gl.useProgram(program);
+
+  const quad = new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]);
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+  const posLoc = gl.getAttribLocation(program, "a_position");
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+  const u_resolution = gl.getUniformLocation(program, "u_resolution");
+  const u_time = gl.getUniformLocation(program, "u_time");
+  const u_mouse = gl.getUniformLocation(program, "u_mouse");
+  const u_motion = gl.getUniformLocation(program, "u_motion");
+  const u_segments = gl.getUniformLocation(program, "u_segments");
+  const u_patternType = gl.getUniformLocation(program, "u_patternType");
+  const u_col1 = gl.getUniformLocation(program, "u_col1");
+  const u_col2 = gl.getUniformLocation(program, "u_col2");
+  const u_col3 = gl.getUniformLocation(program, "u_col3");
+  const u_lineColor = gl.getUniformLocation(program, "u_lineColor");
+  const u_camera = gl.getUniformLocation(program, "u_camera");
+  const u_useCamera = gl.getUniformLocation(program, "u_useCamera");
+  const u_camMix = gl.getUniformLocation(program, "u_camMix");
+  const u_camAspect = gl.getUniformLocation(program, "u_camAspect");
+
+  const camTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, camTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  // Cada paleta trae 4 colores: 3 principales + 1 de línea/negro propio.
+  // Al agregar paletas nuevas, sumá siempre su color de línea acá.
+  const palettes = [
+    { name: "Nebulosa", colors: [[0.10,0.05,0.25],[0.80,0.20,0.50],[0.10,0.70,0.90]], line: [0.03,0.01,0.08] },
+    { name: "Selva", colors: [[0.05,0.15,0.10],[0.90,0.70,0.10],[0.10,0.30,0.80]], line: [0.01,0.05,0.02] },
+    { name: "Lava", colors: [[0.20,0.02,0.02],[0.95,0.45,0.10],[0.98,0.85,0.30]], line: [0.06,0.00,0.00] },
+    { name: "Violeta", colors: [[0.02,0.02,0.10],[0.60,0.10,0.90],[0.10,0.95,0.75]], line: [0.01,0.01,0.05] },
+    { name: "Océano", colors: [[0.02,0.05,0.12],[0.10,0.75,0.65],[0.75,0.92,0.98]], line: [0.01,0.02,0.05] },
+    { name: "Fuego", colors: [[0.12,0.02,0.00],[0.95,0.25,0.05],[0.98,0.80,0.15]], line: [0.04,0.01,0.00] },
+    { name: "Bosque", colors: [[0.02,0.08,0.03],[0.55,0.85,0.15],[0.05,0.45,0.35]], line: [0.01,0.03,0.01] },
+    { name: "Neón", colors: [[0.03,0.00,0.06],[0.95,0.05,0.65],[0.05,0.65,0.98]], line: [0.02,0.00,0.04] },
+  ];
+  let paletteIndex = 0;
+
+  const patternNames = ["Ondas", "Cuadrícula", "Pétalos", "Espiral", "Líquido", "Humo", "Hielo"];
+  let patternType = 0;
+  const patternCount = patternNames.length;
+
+  const cameraVideo = document.getElementById("camera-video");
+  let camStream = null;
+  let cameraActive = false;
+  let camMixValue = 0.7;
+  let camFacing = "environment";
+
+  let mouse = [0.5, 0.5];
+  let motion = [0, 0];
+  let targetMotion = [0, 0];
+  let segments = 6;
+  const startTime = performance.now();
+
+  function resizeCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + "px";
+    canvas.style.height = window.innerHeight + "px";
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  window.addEventListener("resize", resizeCanvas);
+  resizeCanvas();
+
+  function render() {
+    const t = (performance.now() - startTime) / 1000;
+    motion[0] += (targetMotion[0] - motion[0]) * 0.08;
+    motion[1] += (targetMotion[1] - motion[1]) * 0.08;
+    gl.uniform2f(u_resolution, canvas.width, canvas.height);
+    gl.uniform1f(u_time, t);
+    gl.uniform2f(u_mouse, mouse[0], mouse[1]);
+    gl.uniform2f(u_motion, motion[0], motion[1]);
+    gl.uniform1f(u_segments, segments);
+    gl.uniform1f(u_patternType, patternType);
+    const p = palettes[paletteIndex];
+    gl.uniform3f(u_col1, p.colors[0][0], p.colors[0][1], p.colors[0][2]);
+    gl.uniform3f(u_col2, p.colors[1][0], p.colors[1][1], p.colors[1][2]);
+    gl.uniform3f(u_col3, p.colors[2][0], p.colors[2][1], p.colors[2][2]);
+    gl.uniform3f(u_lineColor, p.line[0], p.line[1], p.line[2]);
+
+    const camReady = cameraActive && cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA && cameraVideo.videoWidth > 0;
+    gl.uniform1f(u_useCamera, camReady ? 1.0 : 0.0);
+    gl.uniform1f(u_camMix, camMixValue);
+    if (camReady) {
+      const camAspect = (cameraVideo.videoWidth / cameraVideo.videoHeight) / (canvas.width / canvas.height);
+      gl.uniform1f(u_camAspect, camAspect);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, camTexture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cameraVideo);
+      gl.uniform1i(u_camera, 0);
+    }
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    requestAnimationFrame(render);
+  }
+  render();
+
+  // --- UI animation ---
+  window.addEventListener("load", () => {
+    gsap.to("#ui-header", { opacity: 1, y: 0, duration: 1.2, ease: "power3.out", delay: 0.3 });
+    gsap.to("#ui-footer", { opacity: 1, y: 0, duration: 1.2, ease: "power3.out", delay: 0.5 });
+  });
+
+  // --- Mouse / touch control (desktop y como fallback en mobile) ---
+  function setPointer(x, y) {
+    mouse = [x / window.innerWidth, 1 - y / window.innerHeight];
+  }
+  window.addEventListener("mousemove", (e) => setPointer(e.clientX, e.clientY));
+  window.addEventListener("touchmove", (e) => {
+    if (e.touches[0]) setPointer(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: true });
+
+  // --- Segmentos ---
+  const segmentsSlider = document.getElementById("segments-slider");
+  segmentsSlider.addEventListener("input", (e) => {
+    segments = parseFloat(e.target.value);
+  });
+
+  // --- Paleta ---
+  const paletteLabel = document.getElementById("palette-label");
+  document.getElementById("palette-btn").addEventListener("click", () => {
+    paletteIndex = (paletteIndex + 1) % palettes.length;
+    paletteLabel.innerText = palettes[paletteIndex].name;
+  });
+
+  // --- Tipo de dibujo ---
+  const patternLabel = document.getElementById("pattern-label");
+  document.getElementById("pattern-btn").addEventListener("click", () => {
+    patternType = (patternType + 1) % patternCount;
+    patternLabel.innerText = patternNames[patternType];
+  });
+
+  // --- Guardar PNG ---
+  document.getElementById("save-btn").addEventListener("click", () => {
+    const link = document.createElement("a");
+    link.download = "nmft-kaleidoscope.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  });
+
+  // --- Cámara: funde lo que capta con la paleta de color activa ---
+  const cameraBtn = document.getElementById("camera-btn");
+  const camMixSlider = document.getElementById("cam-mix-slider");
+
+  camMixSlider.addEventListener("input", (e) => {
+    camMixValue = parseFloat(e.target.value) / 100;
+  });
+
+  function startCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      statusText.innerText = "Sin soporte de cámara";
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: camFacing }, audio: false })
+      .then((stream) => {
+        camStream = stream;
+        cameraVideo.srcObject = stream;
+        cameraVideo.play().catch(() => {});
+        cameraActive = true;
+        cameraBtn.innerText = "Cámara: ON";
+        statusText.innerText = "Realidad fusionada con la paleta";
+      })
+      .catch(() => {
+        statusText.innerText = "No se pudo acceder a la cámara";
+      });
+  }
+
+  function stopCamera() {
+    if (camStream) {
+      camStream.getTracks().forEach((track) => track.stop());
+      camStream = null;
+    }
+    cameraActive = false;
+    cameraBtn.innerText = "Cámara";
+    statusText.innerText = "Arrastrá o girá el dispositivo";
+  }
+
+  cameraBtn.addEventListener("click", () => {
+    if (cameraActive) stopCamera(); else startCamera();
+  });
+
+  // --- Auto-fade del título a los 5s de abierto ---
+  const uiHeader = document.getElementById("ui-header");
+  setTimeout(() => {
+    gsap.to(uiHeader, { opacity: 0, duration: 1.5, ease: "power2.out", onComplete: () => uiHeader.classList.add("faded") });
+  }, 5000);
+
+  // --- Pantalla completa + modo inmersivo (oculta todo menos el hamburguesa) ---
+  const uiContainer = document.querySelector(".ui-container");
+  const hamburgerBtn = document.getElementById("hamburger-btn");
+  let immersive = false;
+
+  function setImmersive(on) {
+    immersive = on;
+    uiContainer.classList.toggle("hidden", on);
+    hamburgerBtn.classList.toggle("visible", on);
+  }
+
+  document.getElementById("fullscreen-btn").addEventListener("click", () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+      setImmersive(true);
+    } else {
+      document.exitFullscreen().catch(() => {});
+      setImmersive(false);
+    }
+  });
+
+  // Si se sale de pantalla completa con ESC, restauramos la UI
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement) setImmersive(false);
+  });
+
+  // El hamburguesa muestra/oculta la UI sin salir del modo inmersivo
+  hamburgerBtn.addEventListener("click", () => {
+    uiContainer.classList.toggle("hidden");
+  });
+
+  // Mejora extra: doble click / doble tap en el lienzo para mostrar u ocultar
+  // la UI rápidamente, útil en mobile cuando el hamburguesa queda muy chico.
+  let lastTap = 0;
+  function toggleUIQuick() {
+    if (immersive) uiContainer.classList.toggle("hidden");
+  }
+  canvas.addEventListener("dblclick", toggleUIQuick);
+  canvas.addEventListener("touchend", () => {
+    const now = Date.now();
+    if (now - lastTap < 300) toggleUIQuick();
+    lastTap = now;
+  });
+
+  // --- Sensores de orientación ---
+  function handleOrientation(event) {
+    const motionX = event.gamma ? event.gamma / 45.0 : 0;
+    const motionY = event.beta ? event.beta / 45.0 : 0;
+    targetMotion = [motionX, motionY];
+  }
+
+  const activateBtn = document.getElementById("activate-btn");
+  const statusText = document.getElementById("status-text");
+
+  activateBtn.addEventListener("click", () => {
+    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+      DeviceOrientationEvent.requestPermission()
+        .then((response) => {
+          if (response === "granted") {
+            window.addEventListener("deviceorientation", handleOrientation);
+            statusText.innerText = "Sensores activos";
+            gsap.to(activateBtn, { opacity: 0, scale: 0.8, duration: 0.3, onComplete: () => activateBtn.style.display = "none" });
+          } else {
+            statusText.innerText = "Permiso denegado";
+          }
+        })
+        .catch(() => { statusText.innerText = "Error al solicitar permiso"; });
+    } else if (window.DeviceOrientationEvent) {
+      window.addEventListener("deviceorientation", handleOrientation);
+      statusText.innerText = "Sensores activos";
+      gsap.to(activateBtn, { opacity: 0, scale: 0.8, duration: 0.3, onComplete: () => activateBtn.style.display = "none" });
+    } else {
+      statusText.innerText = "Sin soporte de giroscopio";
+    }
+  });
+})();
+</script>
+</body>
+</html>
